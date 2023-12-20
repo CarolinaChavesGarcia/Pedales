@@ -39,7 +39,7 @@
  * |         VCC         |    +3.3V      |
  * |         GND         |    GND        |
  * |         CSN         |    CIAA_GPIO0 |
- * |         CE	         |    CIAA_GPIO3 |
+ * |         CE	         |    CIAA_GPIO2 |
  * |         SCK         |    SPI_SCK    |
  * |         MOSI        |    SPI_MOSI   |
  * |         IRQ         |    			 |
@@ -57,11 +57,14 @@
 #include "systemclock.h"
 #include "chip.h"
 #include "string.h"
+#include "stdio.h"
+#include "stdint.h"
+#include "math.h"
 /*=====[Inclusions of function dependencies]=================================*/
 
 /*=====[Definition macros of private constants]==============================*/
 #define SYSTICK_CALL_FREC	100  /*call SysTick every 10ms 1/100Hz*/
-#define UART_BAUDRATE 9600
+#define UART_BAUDRATE 115200
 
 typedef struct {
 	float force_node; /** <= force in [Kg]*/
@@ -70,7 +73,9 @@ typedef struct {
 } nrf24l01p_pedal_data;
 
 /*=====[Definitions of extern global variables]==============================*/
-
+int decimalPlaces = 5;
+float PI;
+float PD;
 /*=====[Definitions of public global variables]==============================*/
 
 /* RX_data[0] Store Pedal Left data
@@ -80,7 +85,6 @@ nrf24l01p_pedal_data RX_data[2] = { 0 };
 
 /** Flag for print data in serial port */
 static volatile bool flag_serial_data_print = FALSE;
-
 /*=====[Definitions of private global variables]=============================*/
 
 /*==================[Init_Hardware]==========================================*/
@@ -118,16 +122,107 @@ void clear_array(void) {
 	memset(rcv_fr_PTX, 0x00, 32); //Set array of data input whit zeros
 }
 
-void print_serial_data(nrf24l01p_pedal_data *rx_buffer) {
-	/* Protocol Serial:
-	 * length: 1 + 4*N bytes
-	 * |0xFF|4 x data_float|....|4 x data_float|
-	 */
-	Chip_UART_SendByte(USB_UART, 0xff); // serial init frame is 0xFF
-	Chip_UART_SendBlocking(USB_UART, &(rx_buffer)->force_node, sizeof(float));
-	Chip_UART_SendBlocking(USB_UART, &(rx_buffer + 1)->force_node,sizeof(float));
-}
+/*void print_serial_data(nrf24l01p_pedal_data *rx_buffer) {
+	// Protocol Serial:
+	 // length: 1 + 4*N bytes
+	 // |0xFF|4 x data_float|....|4 x data_float|
 
+	Chip_UART_SendByte(USB_UART, 0xff);
+	//Chip_UART_SendBlocking(USB_UART, &(rx_buffer)->force_node, sizeof(float));
+	//Chip_UART_SendBlocking(USB_UART, &(rx_buffer + 1)->force_node,sizeof(float));
+	// Convert to ASCII & send by UART
+	//floatToASCIIAndSend((rx_buffer)->force_node);
+	Chip_UART_SendByte(USB_UART, 0x44);
+	Chip_UART_SendByte(USB_UART, 0x0A);
+	floatToASCIIAndSend((rx_buffer + 1)->force_node);
+
+}*/
+
+/*
+void uint32ToASCIIAndSend(uint32_t value) {
+    char asciiRepresentation[11]; // Máximo 10 dígitos + carácter nulo
+
+    // Convert uint32_t to ASCII
+    int index = 0;
+
+    if (value == 0) {
+        // Special case value 0
+        asciiRepresentation[index++] = '0';
+    } else {
+    	//Convert each digit to ASCII
+        while (value > 0) {
+            asciiRepresentation[index++] = '0' + (value % 10);
+            value /= 10;
+        }
+    }
+
+    // Correct order
+    for (int i = 0; i < index / 2; ++i) {
+        char temp = asciiRepresentation[i];
+        asciiRepresentation[i] = asciiRepresentation[index - i - 1];
+        asciiRepresentation[index - i - 1] = temp;
+    }
+
+    // Send each character to UART with delay
+    for (int i = 0; i < 11; ++i) {
+    	Chip_UART_SendByte(USB_UART, asciiRepresentation[i]);
+    	DelayMs(50);
+    }
+    Chip_UART_SendByte(USB_UART, 0x0A);
+    Chip_UART_SendByte(USB_UART, 0x0D);
+}*/
+
+void floatToASCIIAndSend(float value) {
+    int32_t intValue = (int32_t)value; // Integer part
+    float decimalPart = value - intValue; // Decimal part
+    char asciiRepresentation[11]; // Máximo 10 dígitos + carácter nulo
+
+    // Convert integer part to ASCII
+    int32_t absIntValue = abs(intValue);
+    int index = 0;
+
+    if (absIntValue == 0) {
+        // Special case value 0
+    	Chip_UART_SendByte(USB_UART, 0x30);
+        //uart_send_char('0');
+    } else {
+        // Convert each digit of integer part to ASCII
+        while (absIntValue > 0) {
+        	//Chip_UART_SendByte(USB_UART, 0x30 + (absIntValue % 10));		//Print integer part
+            //uart_send_char('0' + (absIntValue % 10));
+        	asciiRepresentation[index++] = '0' + (absIntValue % 10);
+            absIntValue /= 10;
+        }
+    }
+
+    // Correct order
+    if (intValue != 0) {
+       for (int i = 0; i < index / 2; ++i) {
+            char temp = asciiRepresentation[i];
+            asciiRepresentation[i] = asciiRepresentation[index - i - 1];
+            asciiRepresentation[index - i - 1] = temp;
+            for (int i = 0; i < index; ++i) {
+            	Chip_UART_SendByte(USB_UART, asciiRepresentation[i]);
+            	//Chip_UART_SendBlocking(USB_UART, &asciiRepresentation[i],sizeof(asciiRepresentation));
+                DelayMs(100);
+            }
+    	}
+    }
+
+    // Enviar el separador decimal
+    Chip_UART_SendByte(USB_UART, 0x2E);
+
+    // Convertir la parte decimal a ASCII
+    for (int i = 0; i < sizeof(decimalPart); ++i) {
+        decimalPart *= 10;
+        Chip_UART_SendByte(USB_UART, 0x30 + (int)decimalPart);
+        //Chip_UART_SendBlocking(USB_UART, &("PD = "),sizeof("PD = "));
+        DelayMs(100);
+        decimalPart -= (int)decimalPart;
+    }
+    Chip_UART_SendByte(USB_UART, 0x0A);
+    Chip_UART_SendByte(USB_UART, 0x0D);
+}
 /*==================[SystickHandler]=========================================*/
 /** Variable used for SysTick Counter */
 static volatile uint32_t cnt = 0;
@@ -168,38 +263,60 @@ int main(void)
 
 	float float_data = 0.0f;
 
+	float floatValue = 123.456;
+
+
 	while (TRUE)
 	{
 
+
+		//floatToASCIIAndSend(floatValue, decimalPlaces);
+		//floatToASCIIAndSend(floatValue);
+		//floatToASCIIAndSend(PD);
+
+
+		/******* Pedals *******/
 		memcpy(&float_data, &rcv_fr_PTX[1], sizeof(float_data)); /*Convert array data to float data*/
-		//flag_serial_data_print = TRUE;
 
 		if (rcv_fr_PTX[0] == 0x01) {/*Pedal L*/
 			RX_data[0].data_ready = true;
 			RX_data[0].force_node = float_data;
-			//GPIOOn(CIAA_DO5);
+			GPIOOn(CIAA_DO7);
+			PI = float_data;
 			if (float_data > 0.2) {
-				GPIOOn(CIAA_DO6);
+				GPIOOn(CIAA_DO3);
 			} else {
-				GPIOOff(CIAA_DO6);
+				GPIOOff(CIAA_DO3);
 			}
 		}
 		if (rcv_fr_PTX[0] == 0x02) {/*Pedal R*/
 			RX_data[1].data_ready = true;
 			RX_data[1].force_node = float_data;
-			//GPIOOn(CIAA_DO3);
+			GPIOOn(CIAA_DO6);
+			PD = float_data;
 			if (float_data > 0.2) {
-				GPIOOn(CIAA_DO7);
+				GPIOOn(CIAA_DO2);
 			} else {
-				GPIOOff(CIAA_DO7);
+				GPIOOff(CIAA_DO2);
 			}
 		}
 
 		if (flag_serial_data_print) {
-			print_serial_data(RX_data);
+			//print_serial_data(&PI, &PD);
+			/*Chip_UART_SendByte(USB_UART, 0x49);
+			Chip_UART_SendByte(USB_UART, 0x0A);
+			floatToASCIIAndSend(PI);
+			Chip_UART_SendByte(USB_UART, 0x44);
+			Chip_UART_SendByte(USB_UART, 0x0A);
+			floatToASCIIAndSend(PD);*/
+			Chip_UART_SendBlocking(USB_UART, &("PI ="),sizeof("PI ="));
+			floatToASCIIAndSend((RX_data)->force_node);
+			Chip_UART_SendBlocking(USB_UART, &("PD = "),sizeof("PD = "));
+			floatToASCIIAndSend((RX_data + 1)->force_node);
 			clear_array();
 			flag_serial_data_print = FALSE;/*Clear the flag*/
 		}
+
 
 	};
 
